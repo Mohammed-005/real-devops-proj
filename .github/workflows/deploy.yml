@@ -19,9 +19,9 @@ jobs:
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
-        with: 
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS }}
+        with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to ECR
@@ -45,13 +45,12 @@ jobs:
           target: "~/"
 
       - name: Execute smart Blue-Green Switchover
-        uses: appleboy/ssh-action@v1.0.7
+        uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
-
             aws ecr get-login-password --region ap-southeast-2 | docker login --username AWS --password-stdin 337405469571.dkr.ecr.ap-southeast-2.amazonaws.com
             cd ~
 
@@ -69,13 +68,14 @@ jobs:
               OLD_CONTAINER="appv2.0-container"
               NEW_CONTAINER="appv1.0-container"
               NEW_PORT=7001
-            fi 
+            fi
 
-            docker-compose up $NEW_TARGET
+            docker-compose up -d $NEW_TARGET
 
             SUCCESS=false
             for i in {1..12}; do
-              if curl -f http:localhost:{NEW_PORT}/health > /dev/null 2>&1
+            
+              if curl -f http://localhost:${NEW_PORT}/health > /dev/null 2>&1; then
                 SUCCESS=true
                 break
               fi
@@ -86,21 +86,19 @@ jobs:
               cp nginx.conf nginx.conf.tmp
               sed -i "s/proxy_pass http:\/\/$CURRENT_TARGET:7000;/proxy_pass http:\/\/$NEW_TARGET:7000;/" nginx.conf.tmp
 
-              mv nginx.conf.tmp nginx.con
+              mv nginx.conf.tmp nginx.conf
 
               if docker ps --format '{{.Names}}' | grep -q "final-proj-nginx"; then
                 docker exec final-proj-nginx nginx -s reload || docker compose restart nginx
               else
                 docker-compose up -d nginx
-              fi 
+              fi
 
-              docker-compose stop $OLD_CONTAINER || docker stop $OLD_CONTAINER
-              docker-compose rm -f $OLD_CONTAINER || docker rm -f $OLD_CONTAINER
+              docker stop $OLD_CONTAINER || true
+              docker rm -f $OLD_CONTAINER || true
               docker image prune -f
             else
-              docker-compose stop $NEW_CONTAINER || docker stop $NEW_CONTAINER
-              docker-compose rm -f $NEW_CONTAINER || docker rm -f $NEW_CONTAINER
+              docker stop $NEW_CONTAINER || true
+              docker rm -f $NEW_CONTAINER || true
               exit 1
             fi
-
-

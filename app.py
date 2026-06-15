@@ -12,7 +12,15 @@ PORT = 7000
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path == '/':
+
+        if self.path == '/health':
+            self.send_response(200)
+            self.send_header("Content-type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "healthy"}).encode())
+            return
+
+        elif self.path == '/':
             visits = r.incr("visits")
 
             response = {
@@ -27,7 +35,7 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps(response).encode())
 
-        else
+        else:
             self.send_response(404)
             self.end_headers()
 
