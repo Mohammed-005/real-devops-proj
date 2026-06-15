@@ -1,0 +1,106 @@
+name: Final Full CI-CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+
+env:
+  IMAGE_TAG: v5
+  AWS_REGION: ap-southeast-2
+  ECR_REPOSITORY: secure-app
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout the Code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with: 
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Build and Push Image to ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          docker build --no-cache -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+      - name: Copy docker-compose.yml, nginx.conf to EC2
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: "docker-compose.yml, nginx.conf"
+          target: "~/"
+
+      - name: Execute smart Blue-Green Switchover
+        uses: appleboy/ssh-action@v1.0.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+
+            aws ecr get-login-password --region ap-southeast-2 | docker login --username AWS --password-stdin 337405469571.dkr.ecr.ap-southeast-2.amazonaws.com
+            cd ~
+
+            docker-compose pull
+
+            if docker ps --format '{{.Names}}' | grep -q "appv1.0-container"; then
+              CURRENT_TARGET="app-v1"
+              NEW_TARGET="app-v2"
+              OLD_CONTAINER="appv1.0-container"
+              NEW_CONTAINER="appv2.0-container"
+              NEW_PORT=7002
+            else
+              CURRENT_TARGET="app-v2"
+              NEW_TARGET="app-v1"
+              OLD_CONTAINER="appv2.0-container"
+              NEW_CONTAINER="appv1.0-container"
+              NEW_PORT=7001
+            fi 
+
+            docker-compose up $NEW_TARGET
+
+            SUCCESS=false
+            for i in {1..12}; do
+              if curl -f http:localhost:{NEW_PORT}/health > /dev/null 2>&1
+                SUCCESS=true
+                break
+              fi
+              sleep 5
+            done
+
+            if [ "$SUCCESS" = true ]; then
+              cp nginx.conf nginx.conf.tmp
+              sed -i "s/proxy_pass http:\/\/$CURRENT_TARGET:7000;/proxy_pass http:\/\/$NEW_TARGET:7000;/" nginx.conf.tmp
+
+              mv nginx.conf.tmp nginx.con
+
+              if docker ps --format '{{.Names}}' | grep -q "final-proj-nginx"; then
+                docker exec final-proj-nginx nginx -s reload || docker compose restart nginx
+              else
+                docker-compose up -d nginx
+              fi 
+
+              docker-compose stop $OLD_CONTAINER || docker stop $OLD_CONTAINER
+              docker-compose rm -f $OLD_CONTAINER || docker rm -f $OLD_CONTAINER
+              docker image prune -f
+            else
+              docker-compose stop $NEW_CONTAINER || docker stop $NEW_CONTAINER
+              docker-compose rm -f $NEW_CONTAINER || docker rm -f $NEW_CONTAINER
+              exit 1
+            fi
+
+
