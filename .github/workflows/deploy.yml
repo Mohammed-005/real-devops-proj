@@ -89,7 +89,7 @@ jobs:
               mv nginx.conf.tmp nginx.conf
 
               if docker ps --format '{{.Names}}' | grep -q "final-proj-nginx"; then
-                docker exec final-proj-nginx nginx -s reload || docker compose restart nginx
+                docker-compose restart nginx
               else
                 docker-compose up -d nginx
               fi
