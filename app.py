@@ -4,7 +4,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 
 REDIS_HOST = os.environ.get("REDIS_HOST", "redis")
-APP_VERSION = os.environ.get("APP_VERSION", "v1")
+APP_VERSION = os.environ.get("APP_VERSION", "v2")
 
 r = redis.Redis(host=REDIS_HOST, port=6379, decode_responses=True)
 
